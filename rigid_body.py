@@ -45,6 +45,7 @@ class RigidBody:
 		return np.concat((self.x, self.r.flatten(), self.p, self.l))
 	
 	def set_state(self, arr:np.array):
+		# TODO: Make these not constants?
 		self.x = arr[0:3]
 		self.r = np.reshape(arr[3:12], (3, 3))
 		self.p = arr[12:15]
@@ -79,5 +80,6 @@ class RigidBody:
 
 		return d_dt
 
-if __name__ == "__main__":
-	print("a")
+if __name__ == '__main__':
+	print('------ testing rigid_body.py ------')
+	# TODO: Add tests

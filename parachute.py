@@ -1,9 +1,9 @@
 
-class Aerodynamics:
+class Parachute:
 	def __init__(self) -> None:
 		pass
 
 
 if __name__ == '__main__':
-	print('------ testing aerodynamics.py ------')
+	print('------ testing parachute.py ------')
 	# TODO: Add tests

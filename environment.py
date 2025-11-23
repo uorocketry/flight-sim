@@ -12,7 +12,7 @@ G_P = 9.8321849378				# gravity at poles			[m s^-2]
 A = 6378137						# earth semi-major axis		[m]
 B = 6356752						# earth semi-minor axis		[m]
 F = 1 - B/A						# earth flattening			[-]
-E_SQ = 1 - B**2/A**2			# earth eccentricity squared[-]
+E_SQ = 1 - B**2/A**2			# earth eccentricity square [-]
 E = E_SQ**0.5					# earth eccentricity		[-]
 GM = G*M						# gravity formula constant	[N m^2 kg^-1]
 K = (B*G_P - A*G_E)/(A*G_E)		# gravity formula constant	[-]
@@ -71,7 +71,7 @@ class Environment:
 		# TODO:
 		return 0	# [m/s]
 
-if __name__ == "__main__":
+if __name__ == '__main__':
 	print('------ testing environment.py ------')
 
 	lat = 47.986943		# [deg]
@@ -103,4 +103,3 @@ if __name__ == "__main__":
 
 	# Test wind speed
 	print('wind speed: {:.2f} m/s'.format(env.wind(lat, lon, alt)))
-	
