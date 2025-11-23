@@ -17,6 +17,60 @@ K = (B*G_P - A*G_E)/(A*G_E)		# gravity formula constant	[-]
 
 R_AIR = 287.052874				# specific gas constant		[J kg^-1 K^-1]
 
+def lla_to_ecef(lat: float, lon: float, alt: float) -> tuple[float, float, float]:
+	# convert degrees to radians
+	lat_rad = np.deg2rad(lat)
+	lon_rad = np.deg2rad(lon)
+
+	# prime vertical radius of curvature
+	n = A / np.sqrt(1 - E**2 * np.sin(lat_rad)**2)
+
+	# ECEF coordinates cooordinates (origin at center of earth)
+	# z through ellipsoid north pole, x through intersection of equator and prime meridian
+	x = (n + alt) * np.cos(lat_rad) * np.cos(lon_rad)
+	y = (n + alt) * np.cos(lat_rad) * np.sin(lon_rad)
+	z = ((1 - E**2) * n + alt) * np.sin(lat_rad)
+
+	return (x, y, z)
+
+# Converting ECEF (x, y, z) coordinates to (lat, lon, alt) values
+# Author: Karthik Venkataramani
+# Date 02/23/2019
+
+def ecef_to_lla(x, y, z):
+	# distance from z-axis
+	r = np.sqrt(x**2 + y**2)
+
+	# Calculate auxiliary values
+	ep_sq = (A**2 - B**2) / B**2  # Second eccentricity squared
+	ee = (A**2 - B**2)  # Difference of squared axes
+
+	f = (54 * B**2) * (z**2)
+	g = r**2 + (1 - E_SQ) * (z**2) - E_SQ * ee * 2
+
+	c = (E_SQ**2) * f * r**2 / (g**3)
+	s = np.cbrt(1 + c + np.sqrt(c**2 + 2*c))
+	
+	p = f / (3.0 * g**2 * (s + (1.0 / s) + 1)**2)
+
+	q = np.sqrt(1 + 2 * p * E_SQ**2)
+	r_0 = -(p * E_SQ * r) / (1 + q) + np.sqrt(0.5 * A**2 * (1 + (1.0 / q)) - p * (z**2) * (1 - E_SQ) / (q * (1 + q)) - 0.5 * p * (r**2))
+
+	# Calculate u and v for altitude and latitude correction
+	u = np.sqrt((r - E_SQ * r_0)**2 + z**2)
+	v = np.sqrt((r - E_SQ * r_0)**2 + (1 - E_SQ) * z**2)
+
+	# corrected altitude component
+	z_0 = (B**2) * z / (A * v)
+	
+	h = u * (1 - B**2 / (A * v))
+	lat_rad = np.arctan((z + ep_sq * z_0) / r)
+	lon_rad = np.arctan2(y, x)
+	return (np.rad2deg(lat_rad), np.rad2deg(lon_rad), h)
+
+def lla_to_enu(lat: float, lon: float, alt: float) -> tuple[float, float, float]:
+	pass
+
 class Environment:
 	def __init__(self) -> None:
 		pass
@@ -63,35 +117,32 @@ class Environment:
 		return 0	# [m/s]
 
 if __name__ == "__main__":
-	env = Environment()
+	print('------ testing environment.py ------')
 
 	lat = 47.986943		# [deg]
 	lon = -81.848339	# [deg]
 	alt = 200			# [m ASL]
 
-	ecef = env.lla_to_ecef(lat, lon, alt)
-	print('x:{}, y:{}, z:{}'.format(round(ecef[0]), round(ecef[1]), round(ecef[2])))
-
-	print('lat:{}, long:{}, alt:{}'.format(lat, lon, alt))
-	lla = env.ecef_to_lla(ecef[0], ecef[1], ecef[2])
-	print('lat:{}, long:{}, alt:{}'.format(lla[0], lla[1], lla[2]))
-	#lla = env.ecef_to_lla_hugues(ecef[0], ecef[1], ecef[2])
-	#print('lat:{}, long:{}, alt:{}'.format(lla[0], lla[1], lla[2]))
-
-	print('eccentricity:', E)
+	print('original lla: lat: {}, long: {}, alt: {}'.format(lat, lon, alt))
+	ecef = lla_to_ecef(lat, lon, alt)
+	print('lla to ecef:  x: {:.2f} m, y: {:.2f} m, z: {:.2f} m'.format(ecef[0], ecef[1], ecef[2]))
+	lla = ecef_to_lla(ecef[0], ecef[1], ecef[2])
+	print('ecef to lla:  lat: {}, long: {}, alt: {}'.format(lla[0], lla[1], lla[2]))
+	
+	env = Environment()
 
 	# Test gravity
-	print(env.g(lat, lon, alt))
+	print('gravity: {:.4f} m/s^2'.format(env.g(lat, lon, alt)))
 
 	# Test temperature
-	print(env.temperature(alt))
+	print('temperature: {:.2f} K'.format(env.temperature(alt)))
 
 	# Test pressure
-	print(env.pressure(alt))
+	print('pressure: {:.2f} Pa'.format(env.pressure(alt)))
 
 	# Test air density
-	print(env.rho(alt))
+	print('air density: {:.4f} kg/m^3'.format(env.rho(alt)))
 
 	# Test wind speed
-	print(env.wind(lat, lon, alt))
+	print('wind speed: {:.2f} m/s'.format(env.wind(lat, lon, alt)))
 	
