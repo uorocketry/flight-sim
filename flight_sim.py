@@ -6,18 +6,19 @@ import matplotlib.pyplot as plt
 from rigid_body import RigidBody
 from environment import Environment
 
-env = Environment()
-rocket = RigidBody()
 
 # launch site
 lat = 47.986943			# [deg]
 long = -81.848339		# [deg]
 alt = 200				# [m]
 
-print(env.g(lat, long, alt))
+env = Environment(lat, long, alt)
+rocket = RigidBody()
+
+print(env.gravity(lat, long, alt))
 
 def step(t, state) -> np.array:
-	g = [0, env.g(lat, long, alt), 0]
+	g = [0, env.gravity(lat, long, alt), 0]
 	rocket.x[1]
 	rocket.apply_force(g)
 	return rocket.step(t, state)
