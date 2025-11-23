@@ -3,7 +3,6 @@ from scipy import integrate
 import math
 import matplotlib.pyplot as plt
 
-from utils import ur
 from rigid_body import RigidBody
 from environment import Environment
 
@@ -11,17 +10,17 @@ env = Environment()
 rocket = RigidBody()
 
 # launch site
-lat = 47.986943*ur.degree	# [deg]
-long = -81.848339*ur.degree	# [deg]
-alt = 200*ur.meter			# [m]
+lat = 47.986943			# [deg]
+long = -81.848339		# [deg]
+alt = 200				# [m]
 
 print(env.g(lat, long, alt))
 
 def step(t, state) -> np.array:
-	g = [0*ur.meter/ur.second, env.g(lat, long, alt), 0*ur.meter/ur.second]
+	g = [0, env.g(lat, long, alt), 0]
 	rocket.x[1]
 	rocket.apply_force(g)
-	return rocket.step(t*ur.second, state)
+	return rocket.step(t, state)
 
 solver = integrate.RK45(step, 0, rocket.get_state(), 10, 0.01, )
 
