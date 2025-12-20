@@ -16,7 +16,10 @@ E_SQ = 1 - B**2/A**2			# earth eccentricity square [-]
 E = E_SQ**0.5					# earth eccentricity		[-]
 GM = G*M						# gravity formula constant	[N m^2 kg^-1]
 K = (B*G_P - A*G_E)/(A*G_E)		# gravity formula constant	[-]
-
+P0 = 101325						# sea-level pressure		[Pa]
+T0 = 288.15						# sea-level temperature		[K]
+Ra = 287.05						# gas constant for R
+L = 0.0065						# Lapse rate 				[K/m]
 class Environment:
 	def __init__(self, lat0:float, lon0:float, alt0:float, wind:list[float]=[]) -> None:
 		# origin for enu coordinates
@@ -25,10 +28,13 @@ class Environment:
 		self.alt0=alt0
 
 	def lla_to_enu(self, lat: float, lon: float, alt: float) -> tuple[float, float, float]:
+		enu = pm.geodetic2enu(lat, lon, alt, self.lat0, self.lon0, self.alt0, ell=pm.utils.Ellipsoid('wgs72'))
+		
 		return pm.geodetic2enu(lat, lon, alt, self.lat0, self.lon0, self.alt0)
 
 	def enu_to_lla(self, east: float, north: float, up: float) -> tuple[float, float, float]:
-		return pm.enu2geodetic(east, north, up, self.lat0, self.lon0, self.alt0)
+		lla = pm.enu2geodetic(east, north, up, self.lat0, self.lon0, self.alt0,ell=pm.utils.Ellipsoid('wgs72'))
+		return lla
 
 	def gravity(self, lat:float, lon:float, alt:float) -> float:
 		"""
@@ -37,7 +43,8 @@ class Environment:
 		# https://mwrona.com/posts/gravity-models/
 		# https://en.wikipedia.org/wiki/Theoretical_gravity#Somigliana_equation
 		# Somigliana equation with WGS84 parameters 
-		g = G_E * ((1+K*np.sin(math.radians(lat))**2)/math.sqrt(1-E**2))
+		phi = math.radians(lat)
+		g = G_E * ((1+K*np.sin(phi)**2)/math.sqrt(1-(E**2)*sin(phi)**2))
 		# free-air gravity correction for altitude 
 		g_loss = GM/(A+alt)**2 - GM/A**2
 		return -(g - g_loss)
@@ -47,7 +54,7 @@ class Environment:
 		Air temperature vs altitude ASL
 		"""
  		# TODO:
-		tk = 273.15 + 20
+		tk = t0 - L * alt
 		return tk
 
 	def pressure(self, alt:float) -> float:
@@ -55,14 +62,14 @@ class Environment:
 		Air pressure in Pa vs altitude ASL
 		"""
 		# TODO:
-		return 100000 # Pa
+		return P = P0(1-((L*alt)/T0)) # Pa
 
 	def rho(self, alt:float) -> float:
 		"""
 		Air density in kg/m^3 vs altitude ASL
 		"""
-		# PV=mRT => m/V=P/(RT)
-		return self.pressure(alt)/(R_AIR*self.temperature(alt))
+		rho = self.pressure(alt)/(R_AIR*self.temperature(alt))
+		return rho
 
 	def wind(self, lat:float, long:float, alt:float) -> tuple[float, float, float]:
 		"""
