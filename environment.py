@@ -19,7 +19,12 @@ K = (B*G_P - A*G_E)/(A*G_E)		# gravity formula constant	[-]
 P0 = 101325						# sea-level pressure		[Pa]
 T0 = 288.15						# sea-level temperature		[K]
 Ra = 287.05						# gas constant for R
-L = 0.0065						# Lapse rate 				[K/m]
+L = 0.0065						# Lapse rate 				[K/m]\
+V_ref = 5.0      				# m/s at 10 m AGL
+z_ref = 10.0     				# reference height [m]
+		alpha = 0.14     		# open terrain
+
+
 class Environment:
 	def __init__(self, lat0:float, lon0:float, alt0:float, wind:list[float]=[]) -> None:
 		# origin for enu coordinates
@@ -28,14 +33,18 @@ class Environment:
 		self.alt0=alt0
 
 	def lla_to_enu(self, lat: float, lon: float, alt: float) -> tuple[float, float, float]:
-		enu = pm.geodetic2enu(lat, lon, alt, self.lat0, self.lon0, self.alt0, ell=pm.utils.Ellipsoid('wgs72'))
-		
-		return pm.geodetic2enu(lat, lon, alt, self.lat0, self.lon0, self.alt0)
+		 return pm.geodetic2enu(
+            lat, lon, alt,
+            self.lat0, self.lon0, self.alt0,
+            ell=pm.utils.Ellipsoid('wgs84')
+        )
 
 	def enu_to_lla(self, east: float, north: float, up: float) -> tuple[float, float, float]:
-		lla = pm.enu2geodetic(east, north, up, self.lat0, self.lon0, self.alt0,ell=pm.utils.Ellipsoid('wgs72'))
-		return lla
-
+		return pm.enu2geodetic(
+            east, north, up,
+            self.lat0, self.lon0, self.alt0,
+            ell=pm.utils.Ellipsoid('wgs84')
+        )
 	def gravity(self, lat:float, lon:float, alt:float) -> float:
 		"""
 		Acceleration due to gravity vs altitude ASL and lat/long (degrees).
@@ -44,7 +53,7 @@ class Environment:
 		# https://en.wikipedia.org/wiki/Theoretical_gravity#Somigliana_equation
 		# Somigliana equation with WGS84 parameters 
 		phi = math.radians(lat)
-		g = G_E * ((1+K*np.sin(phi)**2)/math.sqrt(1-(E**2)*sin(phi)**2))
+		g = G_E * ((1+K*np.sin(phi)**2)/math.sqrt(1-(E**2)*np.sin(phi)**2))
 		# free-air gravity correction for altitude 
 		g_loss = GM/(A+alt)**2 - GM/A**2
 		return -(g - g_loss)
@@ -74,9 +83,14 @@ class Environment:
 	def wind(self, lat:float, long:float, alt:float) -> tuple[float, float, float]:
 		"""
 		Wind velocity vector vs altitude ASL and coordinates
+		Input Altitude in ASL then use of AGL for Wind model
 		"""
-		# TODO:
-		return 0	# [m/s]
+		z = max(alt - self.alt0, 0.1) #altitude above ground level
+		
+		V = V_ref * (z / z_ref)**alpha
+		
+		# East, North, Up
+		return (V, 0.0, 0.0)
 
 if __name__ == '__main__':
 	print('------ testing environment.py ------')

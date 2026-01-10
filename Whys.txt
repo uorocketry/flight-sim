@@ -1,0 +1,6 @@
+Environment class
+For the wind velocity vs altitude it's best to use altitude agl than asl because : 
+the wind speed and turbulence changes the fastest at the atmospheric boundary layer
+and the rocket loads and control are most stresses in that region
+using abgl normalizes the wind profile
+for example if th launch pad is at 450 asl, if we get a wind reading at 1km the rocket only sees 500m abgl, overestimation of wind shear and turbulence

@@ -1,3 +1,4 @@
+import os
 import csv
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
@@ -6,18 +7,64 @@ from scipy.interpolate import RegularGridInterpolator
 # TODO: Include simple drag and lift calculations from geometry (Barowman's, etc.)
 # TODO: Add drag, lift, normal force, etc. given reference area, environment params
 
-M_TO_IN = 0.0254
+IN_TO_M = 0.0254
+
+def load_aero_profile(filename):
+	"""
+	Supported format : - .csv
+	- .xlsx
+	- .npz
+
+	Returns files hearder as a list
+	& each header's data is a list of float, a bigger list of those will be returned
+	"""
+	ext = os.path.splitext(filename)[1].lower()
+
+    if ext == ".csv":
+        with open(filename, "r") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+        header = rows[0]
+        data = [[float(x) for x in row] for row in rows[1:]]
+	
+	elif ext in (".xlsx", ".xls"):
+        import pandas as pd
+        df = pd.read_excel(filename)
+        header = list(df.columns)
+        data = df.to_numpy(dtype=float).tolist()
+
+    elif ext == ".npz":
+        npz = np.load(filename, allow_pickle=True)
+        header = list(npz["header"])
+        data = npz["data"].astype(float).tolist()
+
+    else:
+        raise ValueError(f"Unsupported file format: {ext}")
+
+    return header, data
+
+
 
 class Aerodynamics:
-	def __init__(self, file) -> None:
-
-		with open(file, 'r') as csvfile:
-			reader = csv.reader(csvfile)
-			data = list(reader)
+	def __init__(self, filename) -> None:
+        header, data = load_aero_file(filename)
 		
-		header = data[0]
-		data = data[1:]
-		data = [[float(x) for x in row] for row in data]
+		required = {
+            "Mach",
+            "Alpha",
+            "CD Power-Off",
+            "CD Power-On",
+            "CA Power-Off",
+            "CA Power-On",
+            "CL",
+            "CN",
+            "CP",
+            "Reynolds Number",
+        }
+
+        if not required.issubset(header):
+            missing = required - set(header)
+            raise ValueError(f"Missing required columns: {missing}")
 
 		idx_mach = header.index('Mach')
 		idx_alpha = header.index('Alpha')
@@ -134,6 +181,43 @@ class Aerodynamics:
 		Reynolds number vs mach number and angle of attack (degrees)
 		"""
 		return self._re_i((mach, alpha))
+
+	# Forces ( ENvironment + geometry)
+	@staticmethod
+	def dynamic_pressure(rho, V):
+        """ q = 0.5 * rho * V^2 """
+        return 0.5 * rho * V**2
+
+    def drag_force(self, rho, V, S_ref, mach, alpha, power_on=False):
+        """ Drag force [N] """
+        q = self.dynamic_pressure(rho, V)
+        return q * S_ref * self.cd(mach, alpha, power_on)
+
+    def lift_force(self, rho, V, S_ref, mach, alpha):
+        """ Lift force [N] """
+        q = self.dynamic_pressure(rho, V)
+        return q * S_ref * self.cl(mach, alpha)
+
+    def axial_force(self, rho, V, S_ref, mach, alpha, power_on=False):
+        """ Axial aerodynamic force [N] """
+        q = self.dynamic_pressure(rho, V)
+        return q * S_ref * self.ca(mach, alpha, power_on)
+
+    def normal_force(self, rho, V, S_ref, mach, alpha):
+        """ Normal aerodynamic force [N] """
+        q = self.dynamic_pressure(rho, V)
+        return q * S_ref * self.cn(mach, alpha)
+    
+    # Geometry helpers
+    @staticmethod
+    def reference_area_cylinder(diameter):
+        """ Frontal area of a cylindrical body (rocket) """
+        return np.pi * (diameter / 2)**2
+
+    @staticmethod
+    def cl_thin_airfoil(alpha_deg):
+        """ Thin airfoil theory (low-alpha fallback) """
+        return 2 * np.pi * np.deg2rad(alpha_deg)
 
 
 if __name__ == '__main__':
