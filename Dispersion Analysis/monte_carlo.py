@@ -1,29 +1,21 @@
 import numpy as np
+from numpy.random import normal
 import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse, Polygon
-from matplotlib.collections import PatchCollection
-import matplotlib.patches as mpatches
-from time import process_time, time
-from numpy.random import choice, normal
+from matplotlib.patches import Ellipse
+import matplotlib.patheffects as pe
 import cartopy.crs as ccrs
+import cartopy.io.img_tiles as c_tiles
 import cartopy.feature as cfeature
 import pandas as pd
 import os
+import sys
+import random
 
-from rocketpy import Environment, Flight, Function, MonteCarlo, Rocket, SolidMotor
-from rocketpy.stochastic import (
-    StochasticEnvironment,
-    StochasticFlight,
-    StochasticNoseCone,
-    StochasticParachute,
-    StochasticRailButtons,
-    StochasticRocket,
-    StochasticSolidMotor,
-    StochasticTail,
-    StochasticTrapezoidalFins,
-)
+# Import RocketPy components
+from rocketpy import Environment, Flight, Function, Rocket, SolidMotor
 
-from rocketpy import MonteCarlo
+
+winddatapath = r"C:\flight-sim\Dispersion Analysis\winddata.csv"
 
 
 print("="*80)
@@ -33,23 +25,25 @@ print("="*80)
 
 PERIGE_GEE_PARAMS = {
     'name': 'Perige-Gee',
-    'mass': 7.257,  # kg (dry)
-    'radius': 40.45 / 1000,  # m
+    'mass': 12.863,  # kg (dry)
+    'radius': 39.6215/1000,  # m
+    'inertia': (0.85, 0.85, 0.02),  
+    'com_without_motor': 0.62,
     'motor_impulse': 1415.15,  # N-s
     'burn_time': 5.274,  # s
-    'cd_s_drogue': 0.349 * 1.3,  # m²
-    'cd_s_main': 1.5,  # m² (adjust based on your main chute)
-    'rail_length': 5.7,  # m
+    'cd_s_drogue': 1.4,  # m²
+    'cd_s_main': 2.2,  # m² 
     'inclination': 84.7,  # degrees
     'heading': 53,  # degrees from north
+    'rail_length': 5.2,
 }
 
 LAUNCH_SITE = {
     'name': 'Timmins',
-    'latitude': 40.910,
-    'longitude': -119.056,
-    'elevation': 1196,  # m
-    'utm_zone': '11T',
+    'latitude': 48.4669,
+    'longitude': -81.333,
+    'elevation': 305,  # m
+    'utm_zone': '17T',
 }
 
 # Analysis cases
@@ -62,298 +56,340 @@ ANALYSIS_CASES = {
     6: {'name': 'Main at Apogee', 'drogue': False, 'main': True, 'wind': 'typical_august'},
 }
 
-# Wind profiles -simplified ->use real atmospheric datas
-WIND_PROFILES = {
-    'high_winds_august': {
-        'description': '20 mph ground winds with higher winds aloft (historical worst-case August)',
-        'ground_speed': 8.94,  # 20 mph in m/s
-        'aloft_multiplier': 2.5,  # Winds aloft are 2.5x stronger
-        'direction_ground': 270,  # West wind
-        'direction_variation': 30,  # ±30 degree variation
-    },
-    'typical_august': {
-        'description': 'Typical mid-August multi-level winds',
-        'ground_speed': 4.47,  # 10 mph in m/s
-        'aloft_multiplier': 1.5,  # Moderate increase with altitude
-        'direction_ground': 240,  # WSW wind
-        'direction_variation': 45,  # ±45 degree variation
-    }
-}
 
-def create_wind_profile(wind_type, altitude_m):
-    """Create wind speed and direction profile based on altitude."""
-    profile = WIND_PROFILES[wind_type]
-    
-    # Linear increase with altitude up to 5000m
-    if altitude_m <= 5000:
-        speed_factor = 1 + (profile['aloft_multiplier'] - 1) * (altitude_m / 5000)
-    else:
-        speed_factor = profile['aloft_multiplier']
-    
-    wind_speed = profile['ground_speed'] * speed_factor
-    
-    # Direction variation with altitude
-    if altitude_m <= 1000:
-        direction = profile['direction_ground']
-    else:
-        # Veer with altitude 
-        direction = profile['direction_ground'] + (altitude_m - 1000) / 4000 * 30
-    
-    # Add random variation
-    direction_variation = np.random.normal(0, profile['direction_variation'])
-    direction = (direction + direction_variation) % 360
-    
-    # Convert to u, v components
-    wind_u = -wind_speed * np.sin(np.radians(direction))  # East-West
-    wind_v = -wind_speed * np.cos(np.radians(direction))  # North-South
-    
-    return wind_u, wind_v, wind_speed, direction
 
+def load_and_filter_wind_data(filepath):    
+    df = pd.read_csv(filepath)
+
+    for col in df.columns:
+        low_col = col.lower()
+        if 'wind' in low_col and 'speed' in low_col:
+            df = df.rename(columns={col: 'wind_speed'})
+        elif 'alt' in low_col or 'height' in low_col:
+            df = df.rename(columns={col: 'altitude_ft'})
+        elif 'dir' in low_col or 'deg' in low_col:
+            df = df.rename(columns={col: 'wind_direction'})
+        elif 'day' in low_col or 'date' in low_col:
+            df = df.rename(columns={col: 'day'})
+
+    df['wind_speed_ms'] = df['wind_speed'] * 0.514444
+    df['altitude_m'] = df['altitude_ft'] * 0.3048
     
-def create_custom_environment(wind_type,date=(2026, 1, 15,12)):
-    #Base environment object
-    env = Environment(
-        date = date,
-        latitude=LAUNCH_SITE['latitude'],
-        longitude=LAUNCH_SITE['longitude'],
-        elevation=LAUNCH_SITE['elevation'],
+
+    profiles = [group.sort_values('altitude_ft') for _, group in df.groupby('day')]
+
+    high_wind_days = []
+    typical_days = []
+
+    for p in profiles : 
+        ground_wind = p[p['altitude_ft'] == 3000]['wind_speed_ms'].values[0]
+
+        if 8.0 <= ground_wind <=10.0:
+            high_wind_days.append(p)
+        else : 
+            typical_days.append(p)
+    return high_wind_days, typical_days
+
+
+all_profiles = load_and_filter_wind_data(winddatapath)
+
+def create_wind_profile(selected_day_df, altitude_m):
+    alts = selected_day_df['altitude_ft'].values
+    speeds = selected_day_df['wind_speed'].values
+    directions = selected_day_df['wind_direction'].values
+
+    rads = np.radians(directions)
+    u_data = speeds * np.sin(rads)
+    v_data = speeds * np.cos(rads)
+
+    wind_u = np.interp(altitude_m, alts, u_data)
+    wind_v = np.interp(altitude_m, alts, v_data)
+
+    return wind_u, wind_v
+
+
+def create_custom_environment(selected_day_df):
+    
+    """Create environment with custom wind profile."""
+    env = Environment (
+        date=(2026, 8, 15, 12),
+        **LAUNCH_SITE
     )
-    altitudes = np.linspace(0, 10000, 21)
-    wind_u = []
-    wind_v = []
-    wind_speeds = []
-    wind_directions = []
-    for alt in altitudes : 
-        u, v, speed,direction, = create_wind_profile(wind_type,alt)
-        wind_u.append(u)
-        wind_v.append(v)
-        wind_speeds.append(speed)
-        wind_directions.append(direction)
-
-    atmosphere_dict = {
-        'height': altitudes.tolist(),
-        'wind_u': wind_u,
-        'wind_v': wind_v,
-        'wind_speed': wind_speeds,
-        'wind_direction': wind_directions,
-    }
-
-    env.set_atmospheric_model(type='standard_atmosphere')
+    altitudes_m = selected_day_df['altitude_ft'].values/3.28084
+    wind_u_list = []
+    wind_v_list = []
     
-    # overriding wind functions
-    env.wind_velocity_x = lambda h: np.interp(h, altitudes, wind_u)
-    env.wind_velocity_y = lambda h: np.interp(h, altitudes, wind_v)
+    for alt in altitudes_m:
+        u, v = create_wind_profile(selected_day_df, alt)
+        wind_u_list.append(u)
+        wind_v_list.append(v)
     
-    # Storing wind data
-    env.wind_profile = {
-        'altitude': altitudes,
-        'wind_u': wind_u,
-        'wind_v': wind_v,
-        'wind_speed': wind_speeds,
-        'wind_direction': wind_directions,
-    }
+    # rocketpy wind functions format
+    wind_u_data = np.column_stack((altitudes_m, wind_u_list))
+    wind_v_data = np.column_stack((altitudes_m, wind_v_list))
+    
+    env.wind_velocity_x = Function(wind_u_data, inputs = 'Height(m)', outputs = 'Wind U (m/s)')
+    env.wind_velocity_y = Function(wind_v_data,inputs='Height (m)', outputs='Wind V (m/s)')
+    
     return env
 
-def create_perige_gee_rocket(motor_params, rocket_params, drogue = True, main = True) :
-    #Base motor
+def create_perige_gee_rocket(rocket_params, drogue=True, main=True, main_at_apogee=False):
+    
+    # Create motor
     motor = SolidMotor(
-        thrust_source="path_to_thrust_curve.csv",  # Replace with actual path
-        dry_mass=1.0,
-        dry_inertia=(0.1, 0.1, 0.01),
-        grains_center_of_mass_position=0.1,
-        grain_number=1,
-        grain_density=1700,
-        grain_outer_radius=0.03,
+        thrust_source="motors/perige_gee_thrust.csv",
+        dry_mass=3.108,
+        dry_inertia=(0.397, 0.004, 0.397),
+        center_of_dry_mass_position=0.512,
+        grains_center_of_mass_position=0.563,
+        burn_time=5.274,
+        grain_number=6,
+        grain_density=1560,
+        grain_outer_radius=0.035,
         grain_initial_inner_radius=0.01,
-        grain_initial_height=0.1,
+        grain_initial_height=0.155,
         grain_separation=0.005,
-        nozzle_radius=0.03,
-        throat_radius=0.01,
+        nozzle_radius=0.026,
+        throat_radius=0.0076,
+        interpolation_method="linear",
     )
-
-    #Base Rocket
+    
+    # Create rocket
     rocket = Rocket(
-        radius=rocket_params['radius'],
-        mass=rocket_params['mass'],
-        inertia=rocket_params['inertia'],
+        radius=PERIGE_GEE_PARAMS['radius'],
+        mass=PERIGE_GEE_PARAMS['mass'] + 3.108,  # Include motor mass
+        inertia=PERIGE_GEE_PARAMS['inertia'],
         power_off_drag="aerodynamics/cd_power_off.csv",
         power_on_drag="aerodynamics/cd_power_on.csv",
-        center_of_mass_without_motor=rocket_params['com_without_motor'],
+        center_of_mass_without_motor=PERIGE_GEE_PARAMS['com_without_motor'],
         coordinate_system_orientation="tail_to_nose",
     )
-
-    rocket.set_rail_buttons(
-        upper_button_position=0.224,
-        lower_button_position=-0.93,
-        angular_position=30
-    )
     
-    #  motor
+    # Add motor
     rocket.add_motor(motor, position=0)
     
-    #  nose cone
+    
     rocket.add_nose(
-        length=0.274,
+        length=0.5334,  
         kind="vonKarman",
-        position=1.134 + 0.274,
+        position=1.64,
     )
     
-    #  fins
+    # Add fins
     rocket.add_trapezoidal_fins(
-        n=3,
-        span=0.077,
-        root_chord=0.058,
-        tip_chord=0.018,
-        position=-0.906,
+        n=4,
+        span=0.0762,  # semi-span
+        root_chord=0.254,
+        tip_chord=0.0508,
+        position=-0.101,
         cant_angle=0,
-        airfoil=None,
     )
     
-    # parachutes 
+    # Add rail buttons
+    rocket.set_rail_buttons(
+        upper_button_position=0.081,
+        lower_button_position=-0.93,
+    )
+    
+    # Add parachutes if specified - FIXED TRIGGER FUNCTIONS
     if drogue:
-        def drogue_trigger(p, h, y):
-            vertical_velocity = y[5]
-            return True if vertical_velocity < 0 else False
+        def drogue_trigger(p, y, h):
+          
+            return y[5] < 0 
         
         rocket.add_parachute(
             "Drogue",
             cd_s=rocket_params['cd_s_drogue'],
             trigger=drogue_trigger,
             sampling_rate=105,
-            lag=1.73,  # 1.0 + 0.73 seconds
+            lag=1.0,  # Increased lag to prevent conflicts
             noise=(0, 8.3, 0.5),
         )
+    
     if main:
-        def main_trigger(p, h, y):
-            return h < 300  # Deploy at 300m AGL
-        
+        if main_at_apogee : 
+            def main_trigger(p,y,h):
+                return y[5] < -2
+        else : 
+            def main_trigger(p, y, h):
+                """Trigger main at specified altitude"""
+                return h <= 295  # Deploy slightly before 300m
+            
         rocket.add_parachute(
             "Main",
             cd_s=rocket_params['cd_s_main'],
             trigger=main_trigger,
             sampling_rate=105,
-            lag=1.73,
+            lag=1.5,  # Increased lag to prevent conflicts
             noise=(0, 8.3, 0.5),
         )
     
     return rocket
 
-def run_monte_carlo_simulation(case_config, num_simulations=100):
-    print(f"\nRunning Monte Carlo for: {case_config['name']} ({case_config['wind']})")
-    print(f"Configuration: Drogue={case_config['drogue']}, Main={case_config['main']}")
+
+
+
+def test_single_flight():
+    print("\n" + "="*60)
+    print("TESTING SINGLE SIMULATION")
+    print("="*60)
     
-    # Create environment with specified wind profile
-    env = create_custom_environment(case_config['wind'])
+    # Pick a random day from high wind pool
+    test_day = random.choice(high_pool)
+    print(f"Testing with day {int(test_day['day'].iloc[0])}")
     
-    # Define motor parameters (adjust based on your motor)
-    motor_params = {
-        'dry_mass': 1.0,
-        'dry_inertia': (1.675, 1.675, 0.003),
-        'grain_com_position': -0.571,
-        'grain_number': 6,
-        'grain_density': 1707,
-        'grain_outer_radius': 21.4 / 1000,
-        'grain_inner_radius': 9.65 / 1000,
-        'grain_height': 120 / 1000,
-        'grain_separation': 6 / 1000,
-        'nozzle_radius': 21.642 / 1000,
-        'throat_radius': 8 / 1000,
-        'burn_time': 5.274,
-    }
+    try:
+        env = create_custom_environment(test_day)
+        print("✓ Environment created successfully")
+        
+        rocket = create_perige_gee_rocket(
+            PERIGE_GEE_PARAMS,
+            drogue=True,
+            main=False,
+            main_at_apogee=False
+        )
+        print("✓ Rocket created successfully")
+        
+        flight = Flight(
+            rocket=rocket,
+            environment=env,
+            rail_length=PERIGE_GEE_PARAMS['rail_length'],
+            inclination=PERIGE_GEE_PARAMS['inclination'],
+            heading=PERIGE_GEE_PARAMS['heading'],
+            verbose=False,
+            terminate_on_apogee=False
+        )
+        print("✓ Flight simulation successful")
+        print(f"  Apogee: {flight.apogee:.2f} m")
+        print(f"  Impact: X={flight.x_impact:.2f}m, Y={flight.y_impact:.2f}m")
+        
+        return True
+    except Exception as e:
+        print(f"✗ Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def run_monte_carlo_simulation(case_id, num_simulations):
     
-    # Define rocket parameters
-    rocket_params = {
-        'radius': 40.45 / 1000,
-        'mass': 7.257,
-        'inertia': (3.675, 3.675, 0.007),
-        'com_without_motor': 0,
-        'cd_s_drogue': PERIGE_GEE_PARAMS['cd_s_drogue'],
-        'cd_s_main': PERIGE_GEE_PARAMS['cd_s_main'],
-    }
+    case_config = ANALYSIS_CASES[case_id]
+    wind_type = case_config['wind']
     
+    # 2. Map the case wind string to our filtered CSV pools
+    # This ensures Case 1-3 use High Winds and 4-6 use Typical Winds
+    profile_pool = high_pool if wind_type == 'high_winds_august' else typical_pool
+    
+    print(f"\n>>> Starting Case {case_id}: {case_config['name']} ({wind_type})")
+
+    successful_sims = 0
+    impact_points = []
+    flight_data = []
     # Lists to store results
     impact_points = []
-    apogee_points = []
     flight_data = []
-    
-    successful_sims = 0
     
     for i in range(num_simulations):
         try:
-            # Create rocket with current configuration
+            print(f"  Simulation {i+1}/{num_simulations}...")
+            
+            selected_day_df = random.choice(profile_pool)
+            env = create_custom_environment(selected_day_df)
+     
+            is_apogee_main = (case_config['name']== 'Main at Apogee')
+
             rocket = create_perige_gee_rocket(
-                motor_params, 
-                rocket_params, 
+                rocket_params=PERIGE_GEE_PARAMS,
                 drogue=case_config['drogue'],
-                main=case_config['main']
+                main=case_config['main'],
+                main_at_apogee = is_apogee_main
             )
             
-            # Create flight
+            # Create and run flight
             flight = Flight(
                 rocket=rocket,
                 environment=env,
                 rail_length=PERIGE_GEE_PARAMS['rail_length'],
                 inclination=PERIGE_GEE_PARAMS['inclination'],
                 heading=PERIGE_GEE_PARAMS['heading'],
-                max_time=600,
+                verbose=False,
                 terminate_on_apogee=False,
             )
             
             # Store results
             impact_points.append((flight.x_impact, flight.y_impact))
-            apogee_points.append((flight.apogee_x, flight.apogee_y))
             
-            flight_info = {
+            flight_data.append({
                 'apogee': flight.apogee,
                 'apogee_time': flight.apogee_time,
                 'max_velocity': flight.max_speed,
                 'impact_velocity': flight.impact_velocity,
                 'flight_time': flight.t_final,
-            }
-            flight_data.append(flight_info)
-            
+                'impact_x': flight.x_impact,
+                'impact_y': flight.y_impact,
+            })
             successful_sims += 1
             
-            if (i + 1) % 20 == 0:
-                print(f"  Completed {i + 1}/{num_simulations} simulations")
+            if (i + 1) % 10 == 0:
+                print(f"    Completed {i + 1}/{num_simulations} simulations...")
                 
         except Exception as e:
-            if i < 5:  # Print of first few errors only
-                print(f"  Simulation {i + 1} failed: {str(e)}")
+            print(f"    ! Simulation {i+1} failed: {e}")
             continue
     
-    print(f"  Successfully completed {successful_sims}/{num_simulations} simulations")
+    print(f"\n  Successfully completed {successful_sims}/{num_simulations} simulations")
+    
+    # Calculate sigma statistics if we have enough data
+    sigma_stats = {}
+    if len(impact_points) >= 5:
+        points_array = np.array(impact_points)
+        mean = np.mean(points_array, axis=0)
+
+
+        cov = np.cov(points_array.T)#covariance matrix
+        
+        # Calculate 1σ and 2σ
+        eigenvalues, eigenvectors = np.linalg.eigh(cov)
+
+        #sort eigenvalues to find Major and Minor axes
+        order = eigenvalues.argsort()[::-1]
+        eigenvalues = eigenvalues[order]
+        eigenvectors = eigenvectors[:, order]
+
+
+        sigma_stats = {
+            'mean_impact': mean.tolist(),
+            '1sigma_major': 1 * np.sqrt(eigenvalues[0]),
+            '1sigma_minor': 1 * np.sqrt(eigenvalues[1]),
+            '2sigma_major': 2 * np.sqrt(eigenvalues[0]),
+            '2sigma_minor': 2 * np.sqrt(eigenvalues[1]),
+            'covariance_angle': np.degrees(np.arctan2(*eigenvectors[:, 0][::-1]))
+        }
     
     return {
-        'impact_points': np.array(impact_points),
-        'apogee_points': np.array(apogee_points),
+        'impact_points': np.array(impact_points) if impact_points else np.array([]),
         'flight_data': flight_data,
-        'success_rate': successful_sims / num_simulations,
+        'success_rate': successful_sims / num_simulations if num_simulations > 0 else 0,
+        'sigma_stats': sigma_stats,
     }
 
 def calculate_dispersion_ellipses(points, sigmas=[1, 2]):
-    """Calculating dispersion ellipses for given points."""
+    """Calculate dispersion ellipses for given points."""
     if len(points) < 2:
         return []
     
-    # calculating mean and covariance
     mean = np.mean(points, axis=0)
     cov = np.cov(points.T)
     
-    # Calculating eigenvalues and eigenvectors
     eigenvalues, eigenvectors = np.linalg.eigh(cov)
-    
-    # Sorting eigenvalues and eigenvectors
     order = eigenvalues.argsort()[::-1]
     eigenvalues = eigenvalues[order]
     eigenvectors = eigenvectors[:, order]
     
-    # angle of the ellipse
     angle = np.degrees(np.arctan2(*eigenvectors[:, 0][::-1]))
     
     ellipses = []
     for sigma in sigmas:
-        # Width and height of ellipse
         width = 2 * sigma * np.sqrt(eigenvalues[0])
         height = 2 * sigma * np.sqrt(eigenvalues[1])
         
@@ -367,11 +403,7 @@ def calculate_dispersion_ellipses(points, sigmas=[1, 2]):
     
     return ellipses
 
-
-# MAIN DISPERSION ANALYSIS
-
-
-def run_all_dispersion_analyses(num_simulations=50):
+def run_all_dispersion_analyses(num_simulations=10):
     """Run all 6 dispersion analysis cases."""
     print("\n" + "="*80)
     print("RUNNING ALL 6 DISPERSION ANALYSIS CASES")
@@ -383,322 +415,96 @@ def run_all_dispersion_analyses(num_simulations=50):
         print(f"\nCASE {case_num}: {case_config['name']} - {case_config['wind']}")
         print("-" * 60)
         
-        results = run_monte_carlo_simulation(case_config, num_simulations)
+        results = run_monte_carlo_simulation(case_num, num_simulations)
+        
+        if len(results['impact_points']) > 0:
+            dispersion_ellipses = calculate_dispersion_ellipses(results['impact_points'])
+        else:
+            dispersion_ellipses = []
+        
         all_results[case_num] = {
             'config': case_config,
             'results': results,
-            'dispersion_ellipses': calculate_dispersion_ellipses(results['impact_points'])
+            'dispersion_ellipses': dispersion_ellipses
         }
         
-        # Print summary statistics
+        # Print summary
         if len(results['flight_data']) > 0:
             apogees = [f['apogee'] for f in results['flight_data']]
-            flight_times = [f['flight_time'] for f in results['flight_data']]
-            
             print(f"  Apogee: {np.mean(apogees):.0f} ± {np.std(apogees):.0f} m")
-            print(f"  Flight Time: {np.mean(flight_times):.1f} ± {np.std(flight_times):.1f} s")
-            print(f"  Impact Dispersion Area (1σ): {np.pi * all_results[case_num]['dispersion_ellipses'][0]['width'] * all_results[case_num]['dispersion_ellipses'][0]['height'] / 4:.0f} m²")
+            if results['sigma_stats']:
+                print(f"  1σ Dispersion: {results['sigma_stats']['1sigma_major']:.0f} x {results['sigma_stats']['1sigma_minor']:.0f} m")
+            print(f"  Success rate: {results['success_rate']*100:.1f}%")
     
     return all_results
 
 
-# VISUALIZATION FUNCTIONS
+def plot_statistical_summary(all_case_results, wind_condition_key):
 
-def create_dispersion_map(all_results):
-    """Create overlaid dispersion maps for both wind conditions."""
     
-    # Colors for different trajectories
-    colors = {
-        'Ballistic': '#FF6B6B',  # Red
-        'Drogue Only': '#4ECDC4',  # Teal
-        'Main at Apogee': '#45B7D1',  # Blue
+    tiler = c_tiles.GoogleTiles(style='satellite')
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(1, 1, 1, projection=tiler.crs)
+    
+   
+    extent = [-81.38, -81.28, 48.43, 48.50] 
+    ax.set_extent(extent, crs=ccrs.PlateCarree())
+    ax.add_image(tiler, 13)
+
+    #Add Infrastructure (Hwy 144 and 101)
+    hwy_101 = np.array([[-81.40, 48.47], [-81.25, 48.48]])
+    hwy_144 = np.array([[-81.34, 48.40], [-81.33, 48.55]])
+    
+    for hwy, name in [(hwy_101, 'Hwy 101'), (hwy_144, 'Hwy 144')]:
+        ax.plot(hwy[:,0], hwy[:,1], color='yellow', linewidth=2, 
+                transform=ccrs.PlateCarree(), path_effects=[pe.withStroke(linewidth=4, foreground="black")])
+        ax.text(hwy[1,0], hwy[1,1], name, color='white', transform=ccrs.PlateCarree(), fontweight='bold')
+
+    #Launch Site
+    ax.plot(LAUNCH_SITE['longitude'], LAUNCH_SITE['latitude'], 'k*', 
+            markersize=15, transform=ccrs.PlateCarree(), label='Launch Site')
+
+    #Ellipses for the 3 Trajectories
+    case_styles = {
+        'Ballistic': {'color': 'red', 'label': 'Ballistic'},
+        'Drogue Only': {'color': 'lime', 'label': 'Drogue Only'},
+        'Main at Apogee': {'color': 'cyan', 'label': 'Main at Apogee'}
     }
-    
-    # figure with two subplots (one for each wind condition)
-    fig, axes = plt.subplots(1, 2, figsize=(20, 10))
- 
-    wind_titles = {
-        'high_winds_august': 'High Winds (20 mph ground + higher aloft)',
-        'typical_august': 'Typical Mid-August Winds'
-    }
-    
-    # Processing each wind condition
-    for wind_idx, wind_type in enumerate(['high_winds_august', 'typical_august']):
-        ax = axes[wind_idx]
-        
-        # Set up the map background
-        ax.set_aspect('equal')
-        ax.grid(True, alpha=0.3, linestyle='--')
-        ax.set_xlabel('East Position (m)')
-        ax.set_ylabel('North Position (m)')
-        ax.set_title(f'{wind_titles[wind_type]}', fontsize=14, fontweight='bold')
-        
-        # Plot launch site
-        ax.scatter(0, 0, color='black', s=200, marker='*', label='Launch Site', zorder=10)
-        
-        # Highways (simplified representation)
-        # Highway 144 -> approx ->change later
-        hwy_144_x = np.array([-2000, 2000])
-        hwy_144_y = np.array([500, -500])  
-        ax.plot(hwy_144_x, hwy_144_y, 'k-', linewidth=3, label='Hwy 144', alpha=0.7)
-        ax.plot(hwy_144_x, hwy_144_y, 'y-', linewidth=1.5, alpha=0.7)
-        
-        # Highway 101 -> approx -> compute coordinates
-        hwy_101_x = np.array([-1500, 1500])
-        hwy_101_y = np.array([1000, 1000])  # Roughly E-W orientation
-        ax.plot(hwy_101_x, hwy_101_y, 'k-', linewidth=3, label='Hwy 101', alpha=0.7)
-        ax.plot(hwy_101_x, hwy_101_y, 'y-', linewidth=1.5, alpha=0.7)
-        
-        # Plot dispersion for each type of trajectory
-        for case_num, case_data in all_results.items():
-            if case_data['config']['wind'] != wind_type:
-                continue
+
+    for case_id, res in all_case_results.items():
+        config = ANALYSIS_CASES[case_id]
+        if config['wind'] == wind_condition_key:
+            stats = res['sigma_stats']
+            style = case_styles[config['name']]
             
-            trajectory_type = case_data['config']['name']
-            color = colors[trajectory_type]
+            # Convert meters of dispersion to geographic coordinates for the map
+            # (Using a simplified conversion factor for Timmins latitude)
+            m_to_deg = 1 / 111139.0 
             
-            # individual impact points plot
-            points = case_data['results']['impact_points']
-            if len(points) > 0:
-                ax.scatter(points[:, 0], points[:, 1], 
-                          color=color, s=10, alpha=0.3, 
-                          label=f'{trajectory_type} Impacts')
-            
-            # dispersion ellipses plot
-            ellipses = case_data['dispersion_ellipses']
-            for ellipse in ellipses:
-                if ellipse['sigma'] == 1:
-                    alpha = 0.3
-                    linestyle = '-'
-                else:
-                    alpha = 0.15
-                    linestyle = '--'
+            for s, ls, alpha in [(1, '--', 0.6), (2, '-', 0.3)]:
+                width = stats[f'{s}sigma_major'] * 2 * m_to_deg
+                height = stats[f'{s}sigma_minor'] * 2 * m_to_deg
                 
-                ell_patch = Ellipse(
-                    xy=ellipse['mean'],
-                    width=ellipse['width'],
-                    height=ellipse['height'],
-                    angle=ellipse['angle'],
-                    facecolor=color,
-                    edgecolor=color,
-                    alpha=alpha,
-                    linestyle=linestyle,
-                    linewidth=1.5,
-                )
-                ax.add_patch(ell_patch)
-        
-        # plot limits
-        ax.set_xlim(-3000, 3000)
-        ax.set_ylim(-2000, 2000)
-        
-        # legend
-        ax.legend(loc='upper right', fontsize=10)
-        
-        # grid and background
-        ax.grid(True, alpha=0.2)
-        ax.set_facecolor('#f5f5f5')
-    
-    # title
-    plt.suptitle('Perige-Gee Rocket Dispersion Analysis\nComparison of Wind Conditions', 
-                 fontsize=16, fontweight='bold', y=1.02)
-    
-    plt.tight_layout()
-    plt.savefig('perige_gee_dispersion_comparison.png', dpi=150, bbox_inches='tight')
+                ell = Ellipse(xy=(LAUNCH_SITE['longitude'], LAUNCH_SITE['latitude']),
+                              width=width, height=height, angle=stats['angle'],
+                              edgecolor=style['color'], facecolor=style['color'], alpha=alpha,
+                              linestyle=ls, linewidth=2, transform=ccrs.PlateCarree())
+                ax.add_patch(ell)
+
+    plt.title(f"Dispersion Analysis: {wind_condition_key.replace('_', ' ').title()}", fontsize=15)
+    plt.legend(loc='lower right')
     plt.show()
-    
-    return fig
-
-def create_individual_case_plots(all_results):
-    """Create individual plots for each case."""
-    
-    colors = plt.cm.Set2(np.linspace(0, 1, 6))
-    
-    # 2x3 grid of subplots
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    axes = axes.flatten()
-    
-    for idx, (case_num, case_data) in enumerate(all_results.items()):
-        ax = axes[idx]
-        
-        config = case_data['config']
-        points = case_data['results']['impact_points']
-        ellipses = case_data['dispersion_ellipses']
-        
-        # impact points plot
-        if len(points) > 0:
-            ax.scatter(points[:, 0], points[:, 1], 
-                      color=colors[idx], s=20, alpha=0.6)
-        
-        # dispersion ellipses plot
-        for ellipse in ellipses:
-            if ellipse['sigma'] == 1:
-                alpha = 0.3
-                label = f"1σ ({ellipse['width']/2:.0f}m x {ellipse['height']/2:.0f}m)"
-            else:
-                alpha = 0.15
-                label = f"2σ ({ellipse['width']/2:.0f}m x {ellipse['height']/2:.0f}m)"
-            
-            ell_patch = Ellipse(
-                xy=ellipse['mean'],
-                width=ellipse['width'],
-                height=ellipse['height'],
-                angle=ellipse['angle'],
-                facecolor=colors[idx],
-                edgecolor=colors[idx],
-                alpha=alpha,
-                linestyle='--' if ellipse['sigma'] == 2 else '-',
-            )
-            ax.add_patch(ell_patch)
-        
-        # launch site plot
-        ax.scatter(0, 0, color='red', s=100, marker='*', zorder=10)
-        
-        # title and labels
-        wind_label = "High Winds" if config['wind'] == 'high_winds_august' else "Typical Winds"
-        title = f"Case {case_num}: {config['name']}\n{wind_label}"
-        ax.set_title(title, fontsize=12, fontweight='bold')
-        
-        ax.set_xlabel('East (m)')
-        ax.set_ylabel('North (m)')
-        ax.grid(True, alpha=0.3)
-        ax.set_aspect('equal')
-        
-        # limits
-        if len(points) > 0:
-            x_center = np.mean(points[:, 0])
-            y_center = np.mean(points[:, 1])
-            max_range = max(np.ptp(points[:, 0]), np.ptp(points[:, 1]), 500)
-            ax.set_xlim(x_center - max_range, x_center + max_range)
-            ax.set_ylim(y_center - max_range, y_center + max_range)
-        else:
-            ax.set_xlim(-1000, 1000)
-            ax.set_ylim(-1000, 1000)
-    
-    plt.suptitle('Perige-Gee: Individual Case Dispersion Analysis', 
-                 fontsize=16, fontweight='bold', y=1.02)
-    plt.tight_layout()
-    plt.savefig('perige_gee_individual_cases.png', dpi=150, bbox_inches='tight')
-    plt.show()
-
-def create_statistical_summary(all_results):
-    print("\n" + "="*80)
-    print("STATISTICAL SUMMARY")
-    print("="*80)
-    
-    summary_data = []
-    
-    for case_num, case_data in all_results.items():
-        config = case_data['config']
-        flight_data = case_data['results']['flight_data']
-        
-        if len(flight_data) == 0:
-            continue
-        
-        #statistics extraction
-        apogees = [f['apogee'] for f in flight_data]
-        max_velocities = [f['max_velocity'] for f in flight_data]
-        impact_velocities = [f['impact_velocity'] for f in flight_data]
-        flight_times = [f['flight_time'] for f in flight_data]
-        
-        # dispersion statistics calculations
-        points = case_data['results']['impact_points']
-        if len(points) > 1:
-            mean_impact = np.mean(points, axis=0)
-            std_impact = np.std(points, axis=0)
-            max_distance = np.max(np.sqrt(points[:, 0]**2 + points[:, 1]**2))
-            cep = 0.589 * (std_impact[0] + std_impact[1])  # Circular Error Probable
-        else:
-            mean_impact = (0, 0)
-            std_impact = (0, 0)
-            max_distance = 0
-            cep = 0
-        
-        summary_data.append({
-            'Case': case_num,
-            'Configuration': config['name'],
-            'Wind Condition': 'High' if config['wind'] == 'high_winds_august' else 'Typical',
-            'Success Rate': f"{case_data['results']['success_rate']*100:.1f}%",
-            'Mean Apogee (m)': f"{np.mean(apogees):.0f}",
-            'Std Apogee (m)': f"{np.std(apogees):.0f}",
-            'Mean Max Velocity (m/s)': f"{np.mean(max_velocities):.1f}",
-            'Mean Impact Velocity (m/s)': f"{np.mean(impact_velocities):.1f}",
-            'Mean Flight Time (s)': f"{np.mean(flight_times):.1f}",
-            'Mean Impact East (m)': f"{mean_impact[0]:.0f}",
-            'Mean Impact North (m)': f"{mean_impact[1]:.0f}",
-            'Std Impact East (m)': f"{std_impact[0]:.0f}",
-            'Std Impact North (m)': f"{std_impact[1]:.0f}",
-            'Max Range (m)': f"{max_distance:.0f}",
-            'CEP (m)': f"{cep:.0f}",
-        })
-    
-    # DataFrame and display
-    df_summary = pd.DataFrame(summary_data)
-    print("\nSummary Statistics:")
-    print("-" * 120)
-    print(df_summary.to_string(index=False))
-    print("-" * 120)
-    
-    # Save to CSV
-    df_summary.to_csv('perige_gee_summary_statistics.csv', index=False)
-    print(f"\nSummary saved to 'perige_gee_summary_statistics.csv'")
-    
-    # comparative bar plot
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    
-    # Plot 1: Apogee comparison
-    case_labels = [f"Case {row['Case']}" for _, row in df_summary.iterrows()]
-    apogee_means = [float(row['Mean Apogee (m)']) for _, row in df_summary.iterrows()]
-    apogee_stds = [float(row['Std Apogee (m)']) for _, row in df_summary.iterrows()]
-    
-    bars1 = axes[0, 0].bar(case_labels, apogee_means, yerr=apogee_stds, 
-                          capsize=5, color=plt.cm.Set2(np.arange(len(case_labels))))
-    axes[0, 0].set_ylabel('Apogee (m)')
-    axes[0, 0].set_title('Apogee Altitude Comparison')
-    axes[0, 0].tick_params(axis='x', rotation=45)
-    
-    # Plot 2: Impact velocity comparison
-    impact_vels = [float(row['Mean Impact Velocity (m/s)']) for _, row in df_summary.iterrows()]
-    bars2 = axes[0, 1].bar(case_labels, impact_vels, color=plt.cm.Set2(np.arange(len(case_labels))))
-    axes[0, 1].set_ylabel('Impact Velocity (m/s)')
-    axes[0, 1].set_title('Impact Velocity Comparison')
-    axes[0, 1].tick_params(axis='x', rotation=45)
-    
-    # Plot 3: Flight time comparison
-    flight_times = [float(row['Mean Flight Time (s)']) for _, row in df_summary.iterrows()]
-    bars3 = axes[1, 0].bar(case_labels, flight_times, color=plt.cm.Set2(np.arange(len(case_labels))))
-    axes[1, 0].set_ylabel('Flight Time (s)')
-    axes[1, 0].set_title('Flight Duration Comparison')
-    axes[1, 0].tick_params(axis='x', rotation=45)
-    
-    # Plot 4: Dispersion (CEP) comparison
-    cep_values = [float(row['CEP (m)']) for _, row in df_summary.iterrows()]
-    bars4 = axes[1, 1].bar(case_labels, cep_values, color=plt.cm.Set2(np.arange(len(case_labels))))
-    axes[1, 1].set_ylabel('CEP (m)')
-    axes[1, 1].set_title('Dispersion (Circular Error Probable)')
-    axes[1, 1].tick_params(axis='x', rotation=45)
-    
-    plt.suptitle('Perige-Gee Performance Comparison Across All Cases', 
-                 fontsize=16, fontweight='bold', y=1.02)
-    plt.tight_layout()
-    plt.savefig('perige_gee_performance_comparison.png', dpi=150, bbox_inches='tight')
-    plt.show()
-    
-    return df_summary
-
-
-# main execution
 def main():
     """Main execution function."""
     
     print("\n" + "="*80)
     print("PERIGE-GEE ROCKET DISPERSION ANALYSIS")
     print("="*80)
-    print("\nAnalysis Cases:")
-    print("-" * 40)
-    for case_num, config in ANALYSIS_CASES.items():
-        wind_desc = "High Winds (20 mph ground)" if config['wind'] == 'high_winds_august' else "Typical August Winds"
-        print(f"Case {case_num}: {config['name']} - {wind_desc}")
     
+    # Create output directory
+    os.makedirs('outputs', exist_ok=True)
+    
+    # First, run a test flight
     print("\n" + "="*80)
     
     # Creating output directory
@@ -804,7 +610,10 @@ def create_wind_profile_comparison():
 #Main Analysis
 if __name__ == "__main__":
     TEST_MODE = True  # Set to False for full analysis
-    
+
+    high_pool, typical_pool = load_and_filter_wind_data(winddatapath)
+    test_single_flight()
+
     if TEST_MODE : 
         print("\n" + "="*80)
         print("TEST MODE: Using reduced simulation count")

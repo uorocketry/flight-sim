@@ -1,0 +1,3 @@
+Case,Configuration,Wind_Condition,Simulations,Success_Rate,Apogee_Mean,Apogee_Std,Impact_X_Mean,Impact_Y_Mean,Impact_X_Std,Impact_Y_Std
+1,Ballistic,high_winds_august,3,100.0%,19842.7,0.0,-5054.3,3378.3,0.0,0.0
+4,Ballistic,typical_august,3,100.0%,20161.1,0.0,1222.9,1580.5,0.0,0.0

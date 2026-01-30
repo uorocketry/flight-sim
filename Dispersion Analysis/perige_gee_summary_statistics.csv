@@ -1,1 +1,3 @@
-
+Case,Configuration,Wind Condition,Simulations,Success Rate (%),Mean Apogee (m),Std Apogee (m),Mean Flight Time (s),Mean Impact Velocity (m/s),2σ Dispersion Area (m²),2σ Dispersion Radius (m)
+1,Ballistic,high_winds_august,10,100.0,19241.58667007769,479.62099376286653,130.54707331514902,-340.5811527698609,92694035.25520644,5431.889893214059
+4,Ballistic,typical_august,10,100.0,19819.945054716816,432.01634279013086,132.41923546494624,-343.16477800890937,171107244.50998077,7380.0492901601965
