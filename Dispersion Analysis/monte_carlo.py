@@ -25,14 +25,14 @@ print("="*80)
 
 PERIGE_GEE_PARAMS = {
     'name': 'Perige-Gee',
-    'mass': 12.863,  # kg (dry)
-    'radius': 39.6215/1000,  # m
+    'mass': 8,  # kg (dry)
+    'radius': 26.416/1000,  # m
     'inertia': (0.85, 0.85, 0.02),  
     'com_without_motor': 0.62,
     'motor_impulse': 1415.15,  # N-s
     'burn_time': 5.274,  # s
-    'cd_s_drogue': 1.4,  # m²
-    'cd_s_main': 2.2,  # m² 
+    'cd_s_drogue': 1.4 * 3.14 *0.4*0.4/2,  # m²
+    'cd_s_main': 2.2 * 3.14*1.3*1.3/2,  # m² 
     'inclination': 84.7,  # degrees
     'heading': 53,  # degrees from north
     'rail_length': 5.2,
@@ -40,8 +40,8 @@ PERIGE_GEE_PARAMS = {
 
 LAUNCH_SITE = {
     'name': 'Timmins',
-    'latitude': 48.4669,
-    'longitude': -81.333,
+    'latitude': 47.9870,
+    'longitude': -81.84830,
     'elevation': 305,  # m
     'utm_zone': '17T',
 }
@@ -151,15 +151,16 @@ def create_perige_gee_rocket(rocket_params, drogue=True, main=True, main_at_apog
         thrust_source="motors/perige_gee_thrust.csv",
         dry_mass=3.108,
         dry_inertia=(0.397, 0.004, 0.397),
-        center_of_dry_mass_position=0.512,
+        center_of_dry_mass_position=0.350,
         grains_center_of_mass_position=0.563,
         burn_time=5.274,
-        grain_number=6,
+        grain_number=4,
         grain_density=1560,
         grain_outer_radius=0.035,
         grain_initial_inner_radius=0.01,
-        grain_initial_height=0.155,
+        grain_initial_height=0.115,
         grain_separation=0.005,
+        nozzle_position = 0,
         nozzle_radius=0.026,
         throat_radius=0.0076,
         interpolation_method="linear",
@@ -192,17 +193,20 @@ def create_perige_gee_rocket(rocket_params, drogue=True, main=True, main_at_apog
         span=0.0762,  # semi-span
         root_chord=0.254,
         tip_chord=0.0508,
-        position=-0.101,
+        position=0.254,
         cant_angle=0,
+        
     )
     
     # Add rail buttons
     rocket.set_rail_buttons(
         upper_button_position=0.1,
-        lower_button_position=0.93,
+        lower_button_position=1,
     )
+    rocket.plots.static_margin()
     
-    # Add parachutes if specified - FIXED TRIGGER FUNCTIONS
+    rocket.draw()
+    
     if drogue:
         max_altitude = [0]
 
@@ -211,15 +215,18 @@ def create_perige_gee_rocket(rocket_params, drogue=True, main=True, main_at_apog
             if current_h > max_altitude[0]:
                 max_altitude[0] = current_h
                 return False
-            return current_h < max_altitude[0] - 50
+            return current_h < max_altitude[0]
         
         rocket.add_parachute(
             "Drogue",
             cd_s=rocket_params['cd_s_drogue'],
             trigger=drogue_trigger,
             sampling_rate=105,
-            lag=1.0,  # Increased lag to prevent conflicts
+            lag=1.5,  # Increased lag to prevent conflicts
             noise=(0, 8.3, 0.5),
+            radius=0.4,
+            height=1.5,
+            porosity=0.0432,
         )
     
     if main:
@@ -232,11 +239,11 @@ def create_perige_gee_rocket(rocket_params, drogue=True, main=True, main_at_apog
                 if current_h > max_alt_main[0]:
                     max_alt_main[0] = current_h
                     return False
-                return current_h < max_alt_main[0] - 100
+                return current_h < max_alt_main[0] 
         else : 
             def main_trigger(p, y, h):
                 current_h = h[0] if isinstance(h, (list, np.ndarray)) else h
-                return current_h <= 295 
+                return current_h <= 450 
             
         rocket.add_parachute(
             "Main",
@@ -245,10 +252,15 @@ def create_perige_gee_rocket(rocket_params, drogue=True, main=True, main_at_apog
             sampling_rate=105,
             lag=1.5,  # Increased lag to prevent conflicts
             noise=(0, 8.3, 0.5),
+            radius=1.3,
+            height=1.5,
+            porosity=0.0432,
         )
-    
-    return rocket
+        
 
+    return rocket
+        
+        
 def test_single_flight():
     global high_pool, typical_pool
     
@@ -946,6 +958,8 @@ def main():
         print("\n" + "="*80)
         print("GENERATING VISUALIZATIONS")
         print("="*80)
+        
+
         
         print("1. Creating comprehensive analysis visualization...")
         create_comprehensive_visualization(all_results)
