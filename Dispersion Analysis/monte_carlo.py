@@ -164,6 +164,7 @@ def create_perige_gee_rocket(rocket_params, drogue=True, main=True, main_at_apog
         nozzle_radius=0.026,
         throat_radius=0.0076,
         interpolation_method="linear",
+        coordinate_system_orientation="nozzle_to_combustion_chamber",
     )
     
     # Create rocket
@@ -203,9 +204,9 @@ def create_perige_gee_rocket(rocket_params, drogue=True, main=True, main_at_apog
         upper_button_position=0.1,
         lower_button_position=1,
     )
-    rocket.plots.static_margin()
     
-    rocket.draw()
+    #rocket.plots.static_margin()
+    #rocket.draw()
     
     if drogue:
         max_altitude = [0]
