@@ -15,56 +15,55 @@ def load_aero_profile(filename):
 	- .xlsx
 	- .npz
 
-	Returns files hearder as a list
+	Returns file header as a list
 	& each header's data is a list of float, a bigger list of those will be returned
 	"""
 	ext = os.path.splitext(filename)[1].lower()
-
-    if ext == ".csv":
-        with open(filename, "r") as f:
-            reader = csv.reader(f)
-            rows = list(reader)
-        header = rows[0]
-        data = [[float(x) for x in row] for row in rows[1:]]
-	
+	if ext == ".csv":
+		with open(filename, "r", newline="") as f:
+			reader = csv.reader(f)
+			rows = list(reader)
+		if not rows:
+			raise ValueError("CSV file is empty")
+		header = rows[0]
+		data = [[float(x) for x in row] for row in rows[1:]]
 	elif ext in (".xlsx", ".xls"):
-        import pandas as pd
-        df = pd.read_excel(filename)
-        header = list(df.columns)
-        data = df.to_numpy(dtype=float).tolist()
+		import pandas as pd
+		df = pd.read_excel(filename)
+		header = list(df.columns)
+		data = df.to_numpy(dtype=float).tolist()
+	elif ext == ".npz":
+		npz = np.load(filename, allow_pickle=True)
+		header = list(npz["header"])
+		data = np.array(npz["data"], dtype=float).tolist()
+	else:
+		raise ValueError(f"Unsupported file format: {ext}")
 
-    elif ext == ".npz":
-        npz = np.load(filename, allow_pickle=True)
-        header = list(npz["header"])
-        data = npz["data"].astype(float).tolist()
-
-    else:
-        raise ValueError(f"Unsupported file format: {ext}")
-
-    return header, data
-
+	return header, data
 
 
 class Aerodynamics:
 	def __init__(self, filename) -> None:
-        header, data = load_aero_file(filename)
-		
-		required = {
-            "Mach",
-            "Alpha",
-            "CD Power-Off",
-            "CD Power-On",
-            "CA Power-Off",
-            "CA Power-On",
-            "CL",
-            "CN",
-            "CP",
-            "Reynolds Number",
-        }
+		header, data = load_aero_profile(filename)
 
-        if not required.issubset(header):
-            missing = required - set(header)
-            raise ValueError(f"Missing required columns: {missing}")
+		header = [h.strip() for h in header]
+
+		required = {
+			"Mach",
+			"Alpha",
+			"CD Power-Off",
+			"CD Power-On",
+			"CA Power-Off",
+			"CA Power-On",
+			"CL",
+			"CN",
+			"CP",
+			"Reynolds Number",
+		}
+
+		if not required.issubset(set(header)):
+			missing = required - set(header)
+			raise ValueError(f"Missing required columns: {missing}")
 
 		idx_mach = header.index('Mach')
 		idx_alpha = header.index('Alpha')
@@ -86,39 +85,39 @@ class Aerodynamics:
 		for i in range(1, len(data)):
 			alpha = data[i][idx_alpha]
 			if alpha < alpha_values[-1]:
-				break # recorded all alphas
+				break  # recorded all alphas
 			alpha_values.append(alpha)
 
-		# ensure array is not jagged 
+		# ensure array is not jagged
 		num_alpha = len(alpha_values)
-		num_mach = len(data)//num_alpha
-		if len(data) != num_mach*num_alpha:
+		num_mach = len(data) // num_alpha
+		if len(data) != num_mach * num_alpha:
 			raise ValueError('Inconsistent number of mach/alpha values')
-		
-		self._cd_power_off = np.empty([num_mach, num_alpha], dtype=float)	# drag coefficient, motor on			[-]
-		self._cd_power_on = np.empty([num_mach, num_alpha], dtype=float)	# drag coefficient, motor on			[-]
-		self._ca_power_off = np.empty([num_mach, num_alpha], dtype=float)	# axial force coefficient, motor on		[-]
-		self._ca_power_on = np.empty([num_mach, num_alpha], dtype=float)	# axial force coefficient, motor off	[-]
 
-		self._cl = np.empty([num_mach, num_alpha], dtype=float)				# lift coefficient						[-]
-		self._cn = np.empty([num_mach, num_alpha], dtype=float)				# normal force coefficient				[-]
-		self._cp = np.empty([num_mach, num_alpha], dtype=float)				# center of pressure 					[in 
-		self._re = np.empty([num_mach, num_alpha], dtype=float)				# reynolds number						[-]
+		self._cd_power_off = np.empty([num_mach, num_alpha], dtype=float)  # drag coefficient, motor off [-]
+		self._cd_power_on = np.empty([num_mach, num_alpha], dtype=float)   # drag coefficient, motor on  [-]
+		self._ca_power_off = np.empty([num_mach, num_alpha], dtype=float)  # axial force coefficient, motor off [-]
+		self._ca_power_on = np.empty([num_mach, num_alpha], dtype=float)   # axial force coefficient, motor on  [-]
+
+		self._cl = np.empty([num_mach, num_alpha], dtype=float)            # lift coefficient                        [-]
+		self._cn = np.empty([num_mach, num_alpha], dtype=float)            # normal force coefficient                 [-]
+		self._cp = np.empty([num_mach, num_alpha], dtype=float)            # center of pressure (m)                  [m]
+		self._re = np.empty([num_mach, num_alpha], dtype=float)            # reynolds number                          [-]
 
 		# loop through mach numbers
 		mach_values = []
 		for i in range(num_mach):
-			mach = data[i*num_alpha][idx_mach]
+			mach = data[i * num_alpha][idx_mach]
 			mach_values.append(mach)
 
 			# loop through alphas
 			for j in range(num_alpha):
 				# check that alpha values are consistent
-				line = data[i*num_alpha+j]
+				line = data[i * num_alpha + j]
 				alpha = line[idx_alpha]
 				if alpha_values[j] != alpha:
 					raise ValueError('Inconsistent number of mach/alpha values')
-				
+
 				self._cd_power_off[i][j] = line[idx_cd_power_off]
 				self._cd_power_on[i][j] = line[idx_cd_power_on]
 				self._ca_power_off[i][j] = line[idx_ca_power_off]
@@ -126,9 +125,10 @@ class Aerodynamics:
 
 				self._cl[i][j] = line[idx_cl]
 				self._cn[i][j] = line[idx_cn]
-				self._cp[i][j] = line[idx_cp]*M_TO_IN
+				# convert CP from inches to meters if input is in inches
+				self._cp[i][j] = line[idx_cp] * IN_TO_M
 				self._re[i][j] = line[idx_re]
-		
+
 		# configure interpolation
 		self._cd_power_off_i = RegularGridInterpolator((mach_values, alpha_values), self._cd_power_off, bounds_error=False, fill_value=None)
 		self._cd_power_on_i = RegularGridInterpolator((mach_values, alpha_values), self._cd_power_on, bounds_error=False, fill_value=None)
@@ -157,7 +157,7 @@ class Aerodynamics:
 			return self._ca_power_on_i((mach, alpha))
 		else:
 			return self._ca_power_off_i((mach, alpha))
-		
+
 	def cl(self, mach, alpha):
 		"""
 		Lift coefficient vs mach number and angle of attack (degrees)
@@ -175,49 +175,49 @@ class Aerodynamics:
 		Center of pressure (m) vs mach number and angle of attack (degrees)
 		"""
 		return self._cp_i((mach, alpha))
-	
+
 	def re(self, mach, alpha):
 		"""
 		Reynolds number vs mach number and angle of attack (degrees)
 		"""
 		return self._re_i((mach, alpha))
 
-	# Forces ( ENvironment + geometry)
+	# Forces ( Environment + geometry)
 	@staticmethod
 	def dynamic_pressure(rho, V):
-        """ q = 0.5 * rho * V^2 """
-        return 0.5 * rho * V**2
+		""" q = 0.5 * rho * V^2 """
+		return 0.5 * rho * V**2
 
-    def drag_force(self, rho, V, S_ref, mach, alpha, power_on=False):
-        """ Drag force [N] """
-        q = self.dynamic_pressure(rho, V)
-        return q * S_ref * self.cd(mach, alpha, power_on)
+	def drag_force(self, rho, V, S_ref, mach, alpha, power_on=False):
+		""" Drag force [N] """
+		q = self.dynamic_pressure(rho, V)
+		return q * S_ref * self.cd(mach, alpha, power_on)
 
-    def lift_force(self, rho, V, S_ref, mach, alpha):
-        """ Lift force [N] """
-        q = self.dynamic_pressure(rho, V)
-        return q * S_ref * self.cl(mach, alpha)
+	def lift_force(self, rho, V, S_ref, mach, alpha):
+		""" Lift force [N] """
+		q = self.dynamic_pressure(rho, V)
+		return q * S_ref * self.cl(mach, alpha)
 
-    def axial_force(self, rho, V, S_ref, mach, alpha, power_on=False):
-        """ Axial aerodynamic force [N] """
-        q = self.dynamic_pressure(rho, V)
-        return q * S_ref * self.ca(mach, alpha, power_on)
+	def axial_force(self, rho, V, S_ref, mach, alpha, power_on=False):
+		""" Axial aerodynamic force [N] """
+		q = self.dynamic_pressure(rho, V)
+		return q * S_ref * self.ca(mach, alpha, power_on)
 
-    def normal_force(self, rho, V, S_ref, mach, alpha):
-        """ Normal aerodynamic force [N] """
-        q = self.dynamic_pressure(rho, V)
-        return q * S_ref * self.cn(mach, alpha)
-    
-    # Geometry helpers
-    @staticmethod
-    def reference_area_cylinder(diameter):
-        """ Frontal area of a cylindrical body (rocket) """
-        return np.pi * (diameter / 2)**2
+	def normal_force(self, rho, V, S_ref, mach, alpha):
+		""" Normal aerodynamic force [N] """
+		q = self.dynamic_pressure(rho, V)
+		return q * S_ref * self.cn(mach, alpha)
 
-    @staticmethod
-    def cl_thin_airfoil(alpha_deg):
-        """ Thin airfoil theory (low-alpha fallback) """
-        return 2 * np.pi * np.deg2rad(alpha_deg)
+	# Geometry helpers
+	@staticmethod
+	def reference_area_cylinder(diameter):
+		""" Frontal area of a cylindrical body (rocket) """
+		return np.pi * (diameter / 2)**2
+
+	@staticmethod
+	def cl_thin_airfoil(alpha_deg):
+		""" Thin airfoil theory (low-alpha fallback) """
+		return 2 * np.pi * np.deg2rad(alpha_deg)
 
 
 if __name__ == '__main__':
